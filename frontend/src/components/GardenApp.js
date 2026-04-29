@@ -245,47 +245,66 @@ function IsometricForest({ forest, onTreeClick }) {
 }
 
 // ── Daily view ───────────────────────────────────────────────────────────────
-function DayTimeline({ trees }) {
-  const getNycHourFrac = (ts) => {
+function DayTimeline({ trees, dayKey }) {
+  const getNycMinuteOfDay = (ts) => {
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false,
     }).formatToParts(new Date(ts));
     const h = parseInt(parts.find(p => p.type === 'hour')?.value ?? '0');
     const m = parseInt(parts.find(p => p.type === 'minute')?.value ?? '0');
-    return (h + m / 60) / 24;
+    return h * 60 + m;
   };
 
-  const ticks = [
-    { h: 0, label: '12a' }, { h: 6, label: '6a' },
-    { h: 12, label: '12p' }, { h: 18, label: '6p' }, { h: 24, label: '12a' },
-  ];
+  const clipId = `tl-${dayKey}`;
+  const W = 1440, B = 40; // W = minutes in a day, B = bar height in SVG units
 
   return (
-    <svg className="day-timeline-svg" viewBox="0 0 300 30">
-      <rect x="0" y="9" width="300" height="2" rx="1" fill="rgba(255,255,255,0.10)" />
-      {ticks.map(({ h, label }) => (
-        <g key={h}>
-          <rect x={h / 24 * 300 - 0.5} y="6" width="1" height="8" fill="rgba(255,255,255,0.18)" />
-          <text
-            x={h / 24 * 300}
-            y="28"
-            textAnchor={h === 0 ? 'start' : h === 24 ? 'end' : 'middle'}
-            fontSize="7"
-            fill="rgba(255,255,255,0.28)"
-            fontFamily="Poppins,sans-serif"
-          >{label}</text>
-        </g>
-      ))}
-      {trees.map(tree => (
-        <circle
-          key={tree.id}
-          cx={getNycHourFrac(tree.id) * 300}
-          cy="10"
-          r="4.5"
-          fill={tree.dead ? 'rgba(200,80,60,0.8)' : 'rgba(90,200,100,0.9)'}
-          stroke="rgba(0,0,0,0.25)"
-          strokeWidth="1"
+    <svg className="day-timeline-svg" viewBox={`0 0 ${W} 58`} preserveAspectRatio="none">
+      <defs>
+        <clipPath id={clipId}>
+          <rect x="0" y="0" width={W} height={B} rx="5" />
+        </clipPath>
+      </defs>
+      {/* Untracked background */}
+      <rect x="0" y="0" width={W} height={B} rx="5" fill="rgba(255,255,255,0.08)" />
+      {/* Session blocks — width in SVG units = minutes, so 1 unit = 1 minute */}
+      <g clipPath={`url(#${clipId})`}>
+        {trees.map(tree => {
+          const end   = getNycMinuteOfDay(tree.id);
+          const start = Math.max(0, end - tree.minutes);
+          return (
+            <rect
+              key={tree.id}
+              x={start} y="0"
+              width={Math.max(end - start, 4)}
+              height={B}
+              fill={tree.dead ? '#c04030' : '#4ec86a'}
+              opacity="0.88"
+            />
+          );
+        })}
+      </g>
+      {/* Hourly dividers — heavier every 6 hours */}
+      {Array.from({ length: 23 }, (_, i) => i + 1).map(h => (
+        <line
+          key={h}
+          x1={h * 60} y1="0" x2={h * 60} y2={B}
+          stroke="rgba(0,0,0,0.18)"
+          strokeWidth={h % 6 === 0 ? 3 : 1.5}
         />
+      ))}
+      {/* Labels at 12a, 6a, 12p, 6p, 12a */}
+      {[0, 6, 12, 18, 24].map(h => (
+        <text
+          key={h}
+          x={h * 60} y="55"
+          textAnchor={h === 0 ? 'start' : h === 24 ? 'end' : 'middle'}
+          fontSize="11"
+          fill="rgba(255,255,255,0.28)"
+          fontFamily="Poppins,sans-serif"
+        >
+          {h === 0 || h === 24 ? '12a' : h === 12 ? '12p' : `${h < 12 ? h : h - 12}${h < 12 ? 'a' : 'p'}`}
+        </text>
       ))}
     </svg>
   );
@@ -330,7 +349,7 @@ function DailyView({ forest, onTreeClick }) {
                 {dead > 0 && <><span className="daily-meta-dot">·</span>{dead} 🥀</>}
               </span>
             </div>
-            <DayTimeline trees={trees} />
+            <DayTimeline trees={trees} dayKey={key} />
             <div className="daily-trees-row">
               {trees.map(tree => (
                 <div
