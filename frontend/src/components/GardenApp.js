@@ -12,7 +12,6 @@ const nycMidnightMs = () => {
   const nycProxy = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
   return new Date(dateStr + 'T00:00:00Z').getTime() + (utcProxy - nycProxy);
 };
-const ordSuffix = n => n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th';
 
 const TIME_FILTERS = [
   { key: '7d',   label: 'Week',     ms: 7   * 86400000 },
@@ -149,8 +148,73 @@ function IsoTree({ x, y, minutes, seed, dead }) {
   return <OakTree x={x} y={y} minutes={minutes} seed={seed} />;
 }
 
+// ── Tree info popup ───────────────────────────────────────────────────────────
+function TreePopup({ popup, onClose }) {
+  const { tree, x, y } = popup;
+
+  const fmtDate = (ts) => new Date(ts).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  });
+
+  const fmtDur = (min) => {
+    if (min === 0) return 'less than a minute';
+    if (min < 60) return `${min} min`;
+    const h = Math.floor(min / 60), m = min % 60;
+    return m ? `${h}h ${m}m` : `${h}h`;
+  };
+
+  const pw = 210;
+  const left = Math.max(8, Math.min(x - pw / 2, window.innerWidth - pw - 8));
+  const top  = Math.max(8, y - 175);
+
+  return (
+    <div className="tree-popup-overlay" onClick={onClose}>
+      <div className="tree-popup" style={{ left, top }} onClick={e => e.stopPropagation()}>
+        <button className="tree-popup-close" onClick={onClose}>×</button>
+        <div className="tree-popup-tree">
+          {tree.dead ? (
+            <svg width="52" height="58" viewBox="-26 -50 52 60" overflow="visible">
+              <DeadIsoTree x={0} y={0} seed={tree.id} />
+            </svg>
+          ) : (
+            <svg width="68" height="72" viewBox="-38 -68 76 80" overflow="visible">
+              <OakTree x={0} y={0} minutes={tree.minutes} seed={tree.id} />
+            </svg>
+          )}
+        </div>
+        <div className="tree-popup-rows">
+          {tree.dead ? (
+            <>
+              <div className="tree-popup-row">
+                <span className="tree-popup-key">Died</span>
+                <span className="tree-popup-val">{fmtDate(tree.id)}</span>
+              </div>
+              <div className="tree-popup-row">
+                <span className="tree-popup-key">Studied for</span>
+                <span className="tree-popup-val">{fmtDur(tree.minutes)}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="tree-popup-row">
+                <span className="tree-popup-key">Planted</span>
+                <span className="tree-popup-val">{fmtDate(tree.id)}</span>
+              </div>
+              <div className="tree-popup-row">
+                <span className="tree-popup-key">Session</span>
+                <span className="tree-popup-val">{fmtDur(tree.minutes)}</span>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Isometric forest ──────────────────────────────────────────────────────────
-function IsometricForest({ forest }) {
+function IsometricForest({ forest, onTreeClick }) {
   const { positions, isoPos, N, E, S, W, vbX, vbW, vbH } = buildForestLayout(forest.length);
 
   const items = forest
@@ -167,9 +231,126 @@ function IsometricForest({ forest }) {
     <svg viewBox={`${vbX} 0 ${vbW} ${vbH}`} className="iso-forest-svg">
       <Platform N={N} E={E} S={S} W={W} />
       {items.map(({ tree, x, y }) => (
-        <IsoTree key={tree.id} x={x} y={y} minutes={tree.minutes} seed={tree.id} dead={tree.dead} />
+        <g
+          key={tree.id}
+          style={{ cursor: 'pointer' }}
+          onClick={e => { e.stopPropagation(); onTreeClick(tree, e.clientX, e.clientY); }}
+        >
+          <IsoTree x={x} y={y} minutes={tree.minutes} seed={tree.id} dead={tree.dead} />
+          <ellipse cx={x} cy={y - 18} rx={22} ry={30} fill="transparent" />
+        </g>
       ))}
     </svg>
+  );
+}
+
+// ── Daily view ───────────────────────────────────────────────────────────────
+function DayTimeline({ trees }) {
+  const getNycHourFrac = (ts) => {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false,
+    }).formatToParts(new Date(ts));
+    const h = parseInt(parts.find(p => p.type === 'hour')?.value ?? '0');
+    const m = parseInt(parts.find(p => p.type === 'minute')?.value ?? '0');
+    return (h + m / 60) / 24;
+  };
+
+  const ticks = [
+    { h: 0, label: '12a' }, { h: 6, label: '6a' },
+    { h: 12, label: '12p' }, { h: 18, label: '6p' }, { h: 24, label: '12a' },
+  ];
+
+  return (
+    <svg className="day-timeline-svg" viewBox="0 0 300 30">
+      <rect x="0" y="9" width="300" height="2" rx="1" fill="rgba(255,255,255,0.10)" />
+      {ticks.map(({ h, label }) => (
+        <g key={h}>
+          <rect x={h / 24 * 300 - 0.5} y="6" width="1" height="8" fill="rgba(255,255,255,0.18)" />
+          <text
+            x={h / 24 * 300}
+            y="28"
+            textAnchor={h === 0 ? 'start' : h === 24 ? 'end' : 'middle'}
+            fontSize="7"
+            fill="rgba(255,255,255,0.28)"
+            fontFamily="Poppins,sans-serif"
+          >{label}</text>
+        </g>
+      ))}
+      {trees.map(tree => (
+        <circle
+          key={tree.id}
+          cx={getNycHourFrac(tree.id) * 300}
+          cy="10"
+          r="4.5"
+          fill={tree.dead ? 'rgba(200,80,60,0.8)' : 'rgba(90,200,100,0.9)'}
+          stroke="rgba(0,0,0,0.25)"
+          strokeWidth="1"
+        />
+      ))}
+    </svg>
+  );
+}
+
+function DailyView({ forest, onTreeClick }) {
+  const toKey = (ts) =>
+    new Date(ts).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+
+  const groups = {};
+  for (const tree of forest) {
+    const k = toKey(tree.id);
+    (groups[k] = groups[k] || []).push(tree);
+  }
+
+  const todayKey     = toKey(Date.now());
+  const yesterdayKey = toKey(Date.now() - 86400000);
+
+  const fmtLabel = (key) => {
+    if (key === todayKey)     return 'Today';
+    if (key === yesterdayKey) return 'Yesterday';
+    return new Date(key + 'T12:00:00').toLocaleDateString('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric',
+    });
+  };
+
+  const days = Object.entries(groups).sort(([a], [b]) => b.localeCompare(a));
+
+  return (
+    <div className="daily-view">
+      {days.map(([key, trees]) => {
+        const mins = trees.reduce((s, t) => s + t.minutes, 0);
+        const live = trees.filter(t => !t.dead).length;
+        const dead = trees.filter(t =>  t.dead).length;
+        return (
+          <div key={key} className="daily-card">
+            <div className="daily-card-header">
+              <span className="daily-date">{fmtLabel(key)}</span>
+              <span className="daily-meta">
+                <span className="daily-meta-val">{mins}</span> min
+                {live > 0 && <><span className="daily-meta-dot">·</span>{live} 🌳</>}
+                {dead > 0 && <><span className="daily-meta-dot">·</span>{dead} 🥀</>}
+              </span>
+            </div>
+            <DayTimeline trees={trees} />
+            <div className="daily-trees-row">
+              {trees.map(tree => (
+                <div
+                  key={tree.id}
+                  className="daily-tree-item"
+                  onClick={(e) => onTreeClick(tree, e.clientX, e.clientY)}
+                >
+                  <svg width="36" height="44" viewBox="-22 -50 44 58" overflow="visible">
+                    {tree.dead
+                      ? <DeadIsoTree x={0} y={0} seed={tree.id} />
+                      : <OakTree x={0} y={0} minutes={tree.minutes} seed={tree.id} />
+                    }
+                  </svg>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -257,9 +438,12 @@ function GardenApp() {
     catch { return []; }
   });
   const [timeFilter, setTimeFilter]     = useState('all');
+  const [view, setView]                 = useState('forest');
+  const [popup, setPopup]               = useState(null);
   const circleRef    = useRef(null);
   const totalTimeRef = useRef(0);
   const timeLeftRef  = useRef(0);
+  const killTreeRef  = useRef(null);
   const SETUP_R = 90;
   const SETUP_C = 2 * Math.PI * SETUP_R;
 
@@ -290,13 +474,14 @@ function GardenApp() {
       body: JSON.stringify({ minutes, ordinal }),
     }).catch(() => {});
     setPhase(PHASE.COMPLETE);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, timeLeft]);
 
   useEffect(() => { timeLeftRef.current = timeLeft; }, [timeLeft]);
 
   useEffect(() => {
     if (phase !== PHASE.GROWING) return;
-    const onVis = () => { if (document.hidden) killTree(); };
+    const onVis = () => { if (document.hidden) killTreeRef.current?.(); };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, [phase]);
@@ -319,6 +504,7 @@ function GardenApp() {
       body: JSON.stringify({ minutes: elapsedMinutes, ordinal }),
     }).catch(() => {});
   };
+  killTreeRef.current = killTree;
 
   const startSession = () => {
     if (selectedTime < 1) return;
@@ -358,6 +544,7 @@ function GardenApp() {
 
   return (
     <div className="garden-app" onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
+      {popup && <TreePopup popup={popup} onClose={() => setPopup(null)} />}
 
       {phase === PHASE.SETUP && (
         <div className="gphase">
@@ -432,6 +619,11 @@ function GardenApp() {
           <p className="forest-empty">No trees yet — complete a session to grow your first oak.</p>
         ) : (
           <>
+            <div className="view-toggle">
+              <button className={`view-tab${view === 'forest' ? ' active' : ''}`} onClick={() => setView('forest')}>Forest</button>
+              <button className={`view-tab${view === 'daily'  ? ' active' : ''}`} onClick={() => setView('daily')}>Daily</button>
+            </div>
+
             <div className="forest-filter-bar">
               {TIME_FILTERS.map(f => (
                 <button
@@ -446,10 +638,18 @@ function GardenApp() {
 
             {filteredForest.length === 0 ? (
               <p className="forest-empty">No trees in this period.</p>
-            ) : (
+            ) : view === 'forest' ? (
               <div className="iso-forest-wrap">
-                <IsometricForest forest={filteredForest} />
+                <IsometricForest
+                  forest={filteredForest}
+                  onTreeClick={(tree, x, y) => setPopup({ tree, x, y })}
+                />
               </div>
+            ) : (
+              <DailyView
+                forest={filteredForest}
+                onTreeClick={(tree, x, y) => setPopup({ tree, x, y })}
+              />
             )}
 
             <div className="forest-stats-bar">
